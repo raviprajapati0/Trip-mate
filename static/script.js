@@ -93,6 +93,13 @@ function showResult(answer, threadId, isDraft = false) {
   renderMarkdown(resultBox, latestAnswerMarkdown);
   threadInfo.textContent = `Thread ID: ${threadId}`;
   resultTitle.textContent = isDraft ? "Draft Travel Plan" : "Your Final AI Travel Plan";
+  resultSection.classList.toggle("is-draft", isDraft);
+
+  const resultStamp = document.getElementById("resultStamp");
+  if (resultStamp) {
+    resultStamp.textContent = isDraft ? "DRAFT COPY" : "CONFIRMED";
+  }
+
   resultSection.classList.remove("hidden");
 
   resultSection.scrollIntoView({

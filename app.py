@@ -1,10 +1,10 @@
-from pathlib import Path
+import mimetypes
 import traceback
+from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
@@ -27,11 +27,26 @@ app = FastAPI(
     version="2.0.0",
 )
 
-app.mount(
-    "/static",
-    StaticFiles(directory=str(BASE_DIR / "static")),
-    name="static",
-)
+
+@app.get("/static/{file_path:path}")
+async def serve_static(file_path: str):
+    full_path = (BASE_DIR / "static" / file_path).resolve()
+    static_root = (BASE_DIR / "static").resolve()
+
+    # Prevent path traversal outside the static directory
+    if static_root not in full_path.parents and full_path != static_root:
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+
+    if not full_path.is_file():
+        return JSONResponse(status_code=404, content={"error": "Not found"})
+
+    # Read directly instead of FileResponse/StaticFiles, both of which call
+    # anyio.to_thread.run_sync() under the hood — that call breaks once
+    # nest_asyncio.apply() has patched the event loop.
+    content = full_path.read_bytes()
+    media_type, _ = mimetypes.guess_type(str(full_path))
+    return Response(content=content, media_type=media_type or "application/octet-stream")
+
 
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
