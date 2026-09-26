@@ -1,0 +1,79 @@
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
+    environment {
+        IMAGE_NAME = "tripmate-ai"
+        IMAGE_TAG  = "${env.BUILD_NUMBER}"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Install & Lint') {
+            steps {
+                sh '''
+                    python3 -m venv .venv
+                    . .venv/bin/activate
+                    pip install --upgrade pip
+                    pip install -r requirements.txt
+                    pip install flake8
+                    # fail the build on real errors, just warn on style
+                    flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+                '''
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
+            }
+        }
+
+        stage('Smoke Test') {
+            steps {
+                // run the container briefly and hit /health to catch obvious breakages
+                // no real secrets are needed for this - it's just an import/boot check
+                sh '''
+                    docker run -d --name tripmate_smoke_${BUILD_NUMBER} -p 8010:8000 ${IMAGE_NAME}:${IMAGE_TAG}
+                    sleep 5
+                    curl -f http://localhost:8010/health || (docker logs tripmate_smoke_${BUILD_NUMBER} && exit 1)
+                '''
+            }
+            post {
+                always {
+                    sh "docker rm -f tripmate_smoke_${BUILD_NUMBER} || true"
+                }
+            }
+        }
+
+        stage('Deploy') {
+            when {
+                branch 'main'
+            }
+            steps {
+                // RENDER_DEPLOY_HOOK is a Jenkins 'Secret text' credential holding the
+                // unique Deploy Hook URL from Render's dashboard (Settings > Deploy Hook).
+                // It is never printed, never stored in this file, and never baked into the image.
+                withCredentials([string(credentialsId: 'render-deploy-hook', variable: 'RENDER_DEPLOY_HOOK')]) {
+                    sh 'curl -fsS -X POST "$RENDER_DEPLOY_HOOK"'
+                }
+            }
+        }
+    }
+
+    post {
+        failure {
+            echo "Build failed - check the stage logs above."
+        }
+    }
+}
